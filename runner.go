@@ -26,6 +26,9 @@ type Runner struct {
 
 	wg sync.WaitGroup
 
+	startTime time.Time
+	endTime   time.Time
+
 	results []Result
 }
 
@@ -38,6 +41,21 @@ type Result struct {
 	StatusCodes map[int]int            `json:"statusCodes"`
 	Time        time.Duration          `json:"time"`
 	Histogram   *hdrhistogram.Snapshot `json:"histogram"`
+	StartTime   time.Time              `json:"startTime"`
+	EndTime     time.Time              `json:"endTime"`
+}
+
+func (r *Result) Hist() *hdrhistogram.Histogram {
+	if r.h != nil {
+		return r.h
+	}
+
+	if r.Histogram != nil {
+		r.h = hdrhistogram.Import(r.Histogram)
+		return r.h
+	}
+
+	return nil
 }
 
 func NewRunner(concurrency int, duration, timeout time.Duration, url string) *Runner {
@@ -60,16 +78,19 @@ func NewRunner(concurrency int, duration, timeout time.Duration, url string) *Ru
 	}
 }
 
-func (r *Runner) Start() {
+func (r *Runner) Run() Result {
+	r.startTime = time.Now()
+
 	r.wg.Add(r.concurrency)
 
 	for i := 0; i < r.concurrency; i++ {
 		go r.run(i)
 	}
-}
 
-func (r *Runner) Wait() {
 	r.wg.Wait()
+	r.endTime = time.Now()
+
+	return r.calculateResult()
 }
 
 func (r *Runner) run(index int) {
@@ -107,7 +128,7 @@ type SingleResult struct {
 
 func hundredMicroSeconds(d time.Duration) int {
 	us := int(d / time.Microsecond)
-	return int(math.Round(float64(us/100))*100) / 100
+	return int(math.Round(float64(us / 100)))
 }
 
 type Timeout interface {
@@ -154,12 +175,14 @@ func (r *Runner) doRequest() (result SingleResult) {
 	return
 }
 
-func (r *Runner) Result() Result {
+func (r *Runner) calculateResult() Result {
 	result := Result{
 		StatusCodes: map[int]int{},
 	}
 
 	result.Time = r.duration
+	result.StartTime = r.startTime
+	result.EndTime = r.endTime
 
 	for i := 0; i < r.concurrency; i++ {
 		current := r.results[i]

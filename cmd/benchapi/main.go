@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ecs"
 	"github.com/codahale/hdrhistogram"
+	"github.com/go-redis/redis"
 	"github.com/google/uuid"
 	"github.com/spf13/viper"
 
@@ -35,6 +36,7 @@ type StorageManager interface {
 
 var cm ContainerManager
 var sm StorageManager
+var maxPerContainer int
 
 func main() {
 	var err error
@@ -54,8 +56,15 @@ func main() {
 	viper.AutomaticEnv()
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 
+	maxPerContainer = viper.GetInt("max-per-container")
+
+	r := redis.NewClient(&redis.Options{
+		Addr:     viper.GetString("redis-address"),
+		Password: viper.GetString("redis-auth"),
+	})
+
 	cm = container.NewECS(ecs.New(sess), "", "")
-	sm = storage.NewRedis(nil)
+	sm = storage.NewRedis(r)
 
 	http.HandleFunc("/health", health)
 	http.HandleFunc("/start", start)
@@ -110,8 +119,6 @@ func start(w http.ResponseWriter, r *http.Request) {
 
 	runID := uuid.New().String()
 
-	maxPerContainer := 50
-
 	for i := concurrency; i > 0; i -= maxPerContainer {
 		c := maxPerContainer
 		if i < c {
@@ -119,7 +126,7 @@ func start(w http.ResponseWriter, r *http.Request) {
 		}
 
 		cm.StartContainer(map[string]string{
-			"BENCH_CONCURRENCY": strconv.FormatInt(int64(concurrency), 10),
+			"BENCH_CONCURRENCY": strconv.FormatInt(int64(c), 10),
 			"BENCH_URL":         u.String(),
 			"BENCH_DURATION":    duration.String(),
 			"BENCH_TIMEOUT":     timeout.String(),
@@ -252,5 +259,5 @@ func result(w http.ResponseWriter, r *http.Request) {
 
 func hundredMicroSeconds(d time.Duration) int {
 	us := int(d / time.Microsecond)
-	return int(math.Round(float64(us/100))*100) / 100
+	return int(math.Round(float64(us / 100)))
 }

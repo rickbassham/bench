@@ -72,10 +72,7 @@ func main() {
 		return
 	}
 
-	runner.Start()
-	runner.Wait()
-
-	result := runner.Result()
+	result := runner.Run()
 
 	err = sendResult(result)
 	if err != nil {
@@ -89,7 +86,7 @@ func sendReadyToStart() error {
 		return errors.Wrap(err, "error sending ready to start")
 	}
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return errors.New("non-200 status code")
 	}
 
@@ -103,12 +100,12 @@ func waitForStart() error {
 			return errors.Wrap(err, "error sending wait for start")
 		}
 
-		if resp.StatusCode == 200 {
+		if resp.StatusCode == http.StatusOK {
 			log.Println("ready to start")
 			return nil
 		}
 
-		if resp.StatusCode == 202 {
+		if resp.StatusCode == http.StatusAccepted {
 			log.Println("still waiting for other runners to be ready")
 			time.Sleep(1 * time.Second)
 			continue
@@ -132,7 +129,7 @@ func sendResult(result bench.Result) error {
 		return errors.Wrap(err, "error sending result")
 	}
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return errors.New("non-200 status code")
 	}
 
