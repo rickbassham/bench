@@ -14,13 +14,26 @@ type ECS struct {
 	ecs            ECSService
 	taskDefinition string
 	cluster        string
+	subnets        []*string
+	securityGroups []*string
+	publicIP       *string
 }
 
-func NewECS(ecs ECSService, taskDefinition, cluster string) *ECS {
+func NewECS(ecs ECSService, taskDefinition, cluster string, subnets, securityGroups []string, publicIP bool) *ECS {
+	var assignPublicIP string
+	if publicIP {
+		assignPublicIP = "ENABLED"
+	} else {
+		assignPublicIP = "DISABLED"
+	}
+
 	return &ECS{
 		ecs:            ecs,
 		taskDefinition: taskDefinition,
 		cluster:        cluster,
+		subnets:        aws.StringSlice(subnets),
+		securityGroups: aws.StringSlice(securityGroups),
+		publicIP:       aws.String(assignPublicIP),
 	}
 }
 
@@ -42,6 +55,13 @@ func (c *ECS) StartContainer(env map[string]string) (string, error) {
 				&ecs.ContainerOverride{
 					Environment: envOverride,
 				},
+			},
+		},
+		NetworkConfiguration: &ecs.NetworkConfiguration{
+			AwsvpcConfiguration: &ecs.AwsVpcConfiguration{
+				AssignPublicIp: c.publicIP,
+				SecurityGroups: c.securityGroups,
+				Subnets:        c.subnets,
 			},
 		},
 	})

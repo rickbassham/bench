@@ -19,31 +19,6 @@ type Client interface {
 	SMembers(key string) *redis.StringSliceCmd
 }
 
-type Task struct {
-	ID          string        `json:"id"`
-	ContainerID string        `json:"containerId"`
-	Ready       bool          `json:"ready"`
-	Result      *bench.Result `json:"result"`
-	Logs        string        `json:"logs"`
-	Concurrency int           `json:"concurrency"`
-}
-
-type Job struct {
-	RunID       string        `json:"runId"`
-	Concurrency int           `json:"concurrency"`
-	Duration    time.Duration `json:"duration"`
-	Timeout     time.Duration `json:"timeout"`
-	URL         string        `json:"url"`
-
-	MetaData map[string]string `json:"meta"`
-
-	RequestTime time.Time `json:"requestTime"`
-	StartTime   time.Time `json:"startTime"`
-	EndTime     time.Time `json:"endTime"`
-
-	Tasks []Task `json:"tasks"`
-}
-
 type Redis struct {
 	r Client
 }
@@ -54,7 +29,7 @@ func NewRedis(r Client) *Redis {
 	}
 }
 
-func (r *Redis) SaveJob(j Job) error {
+func (r *Redis) SaveJob(j bench.Job) error {
 	jobData, err := json.Marshal(&j)
 	if err != nil {
 		return errors.Wrap(err, "error marshalling job")
@@ -80,8 +55,8 @@ func (r *Redis) SaveJob(j Job) error {
 	return nil
 }
 
-func (r *Redis) GetJob(runID string) (Job, error) {
-	var j Job
+func (r *Redis) GetJob(runID string) (bench.Job, error) {
+	var j bench.Job
 
 	log.Println(fmt.Sprintf("JOB_%s", runID))
 
@@ -100,7 +75,7 @@ func (r *Redis) GetJob(runID string) (Job, error) {
 		return j, errors.Wrap(err, "error getting tasks data")
 	}
 
-	j.Tasks = []Task{}
+	j.Tasks = []bench.Task{}
 
 	for _, taskID := range taskIDs {
 		t, err := r.GetTask(runID, taskID)
@@ -114,8 +89,8 @@ func (r *Redis) GetJob(runID string) (Job, error) {
 	return j, nil
 }
 
-func (r *Redis) GetTask(runID, taskID string) (Task, error) {
-	var t Task
+func (r *Redis) GetTask(runID, taskID string) (bench.Task, error) {
+	var t bench.Task
 
 	log.Println("GET", fmt.Sprintf("JOB_%s_TASK_%s", runID, taskID))
 
@@ -132,7 +107,7 @@ func (r *Redis) GetTask(runID, taskID string) (Task, error) {
 	return t, nil
 }
 
-func (r *Redis) SaveTask(runID string, t Task) error {
+func (r *Redis) SaveTask(runID string, t bench.Task) error {
 	taskData, err := json.Marshal(&t)
 	if err != nil {
 		return errors.Wrap(err, "error marshalling task")

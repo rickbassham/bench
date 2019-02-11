@@ -29,20 +29,9 @@ type Runner struct {
 	startTime time.Time
 	endTime   time.Time
 
-	results []Result
-}
+	runOutput chan singleResult
 
-type Result struct {
-	h *hdrhistogram.Histogram
-
-	Requests    int                    `json:"requests"`
-	Errors      int                    `json:"errors"`
-	Timeouts    int                    `json:"timeouts"`
-	StatusCodes map[int]int            `json:"statusCodes"`
-	Time        time.Duration          `json:"time"`
-	Histogram   *hdrhistogram.Snapshot `json:"histogram"`
-	StartTime   time.Time              `json:"startTime"`
-	EndTime     time.Time              `json:"endTime"`
+	result Result
 }
 
 func (r *Result) Hist() *hdrhistogram.Histogram {
@@ -63,23 +52,24 @@ func NewRunner(concurrency int, duration, timeout time.Duration, url string) *Ru
 		timeout = 2 * time.Second
 	}
 
-	results := make([]Result, concurrency)
-	for i := 0; i < concurrency; i++ {
-		results[i].h = hdrhistogram.New(0, int64(hundredMicroSeconds(timeout)), 2)
-		results[i].StatusCodes = map[int]int{}
-	}
-
 	return &Runner{
 		concurrency: concurrency,
 		duration:    duration,
 		timeout:     timeout,
 		url:         url,
-		results:     results,
+		runOutput:   make(chan singleResult, 1000),
 	}
 }
 
 func (r *Runner) Run() Result {
 	r.startTime = time.Now()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		r.combineResults()
+		wg.Done()
+	}()
 
 	r.wg.Add(r.concurrency)
 
@@ -87,43 +77,35 @@ func (r *Runner) Run() Result {
 		go r.run(i)
 	}
 
+	// Wait for our concurrent runners to finish.
 	r.wg.Wait()
+
+	close(r.runOutput)
+
 	r.endTime = time.Now()
 
-	return r.calculateResult()
+	// Wait for combineResults to finish.
+	wg.Wait()
+
+	return r.result
 }
 
 func (r *Runner) run(index int) {
 	runStart := time.Now()
 
 	for time.Now().Sub(runStart) < r.duration {
-		result := r.doRequest()
-
-		r.results[index].h.RecordValue(int64(result.DurationHundredMicroSeconds))
-		r.results[index].Requests++
-
-		if result.Err {
-			r.results[index].Errors++
-		}
-
-		if result.Timeout {
-			r.results[index].Timeouts++
-		}
-
-		r.results[index].StatusCodes[result.StatusCode]++
+		r.doRequest()
 	}
-
-	r.results[index].Time = time.Now().Sub(runStart)
 
 	r.wg.Done()
 }
 
-type SingleResult struct {
-	StatusCode                  int  `json:"s"`
-	DurationHundredMicroSeconds int  `json:"d"`
-	Bytes                       int  `json:"b"`
-	Timeout                     bool `json:"t"`
-	Err                         bool `json:"e"`
+type singleResult struct {
+	StatusCode                  int
+	DurationHundredMicroSeconds int
+	Bytes                       int
+	Timeout                     bool
+	Err                         bool
 }
 
 func hundredMicroSeconds(d time.Duration) int {
@@ -135,7 +117,12 @@ type Timeout interface {
 	Timeout() bool
 }
 
-func (r *Runner) doRequest() (result SingleResult) {
+func (r *Runner) doRequest() {
+	var result singleResult
+	defer func() {
+		r.runOutput <- result
+	}()
+
 	randomKey, _ := rand.Int(rand.Reader, big.NewInt(5000000))
 
 	url := fmt.Sprintf("%s%d", r.url, randomKey.Int64())
@@ -171,38 +158,34 @@ func (r *Runner) doRequest() (result SingleResult) {
 	}
 
 	result.DurationHundredMicroSeconds = hundredMicroSeconds(time.Now().Sub(start))
-
-	return
 }
 
-func (r *Runner) calculateResult() Result {
+func (r *Runner) combineResults() {
 	result := Result{
 		StatusCodes: map[int]int{},
+		h:           hdrhistogram.New(0, int64(hundredMicroSeconds(r.timeout)), 2),
 	}
 
-	result.Time = r.duration
-	result.StartTime = r.startTime
-	result.EndTime = r.endTime
+	for item := range r.runOutput {
+		result.Requests++
+		result.h.RecordValue(int64(item.DurationHundredMicroSeconds))
 
-	for i := 0; i < r.concurrency; i++ {
-		current := r.results[i]
-
-		if i == 0 {
-			result.h = current.h
-		} else {
-			result.h.Merge(current.h)
+		if item.Err {
+			result.Errors++
 		}
 
-		result.Requests += current.Requests
-		result.Timeouts += current.Timeouts
-		result.Errors += current.Errors
-
-		for k, v := range current.StatusCodes {
-			result.StatusCodes[k] += v
+		if item.Timeout {
+			result.Timeouts++
 		}
+
+		result.StatusCodes[item.StatusCode]++
 	}
 
 	result.Histogram = result.h.Export()
 
-	return result
+	result.StartTime = r.startTime
+	result.EndTime = r.endTime
+	result.Time = r.endTime.Sub(r.startTime)
+
+	r.result = result
 }

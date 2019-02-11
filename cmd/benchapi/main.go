@@ -33,10 +33,10 @@ type ContainerManager interface {
 }
 
 type StorageManager interface {
-	SaveTask(runID string, t storage.Task) error
-	GetTask(runID, taskID string) (storage.Task, error)
-	SaveJob(j storage.Job) error
-	GetJob(runID string) (storage.Job, error)
+	SaveTask(runID string, t bench.Task) error
+	GetTask(runID, taskID string) (bench.Task, error)
+	SaveJob(j bench.Job) error
+	GetJob(runID string) (bench.Job, error)
 }
 
 var cm ContainerManager
@@ -84,7 +84,13 @@ func main() {
 			return
 		}
 
-		cm = container.NewECS(ecs.New(sess), viper.GetString("task-definition"), viper.GetString("cluster"))
+		cm = container.NewECS(
+			ecs.New(sess),
+			viper.GetString("task-definition"),
+			viper.GetString("cluster"),
+			viper.GetStringSlice("subnets"),
+			viper.GetStringSlice("security-groups"),
+			viper.GetBool("public-ip"))
 	}
 
 	http.HandleFunc("/health", health)
@@ -151,7 +157,7 @@ func start(w http.ResponseWriter, r *http.Request) {
 
 	runID := uuid.New().String()
 
-	j := storage.Job{
+	j := bench.Job{
 		Concurrency: concurrency,
 		Duration:    duration,
 		RequestTime: time.Now(),
@@ -190,7 +196,7 @@ func start(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		j.Tasks = append(j.Tasks, storage.Task{
+		j.Tasks = append(j.Tasks, bench.Task{
 			ID:          runnerID,
 			ContainerID: taskID,
 			Concurrency: c,
@@ -347,7 +353,7 @@ func result(w http.ResponseWriter, r *http.Request) {
 	}
 
 	output := struct {
-		Job     storage.Job  `json:"job"`
+		Job     bench.Job    `json:"job"`
 		Summary summary      `json:"summary"`
 		Result  bench.Result `json:"result"`
 	}{
