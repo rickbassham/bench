@@ -3,6 +3,7 @@ package storage
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/go-redis/redis"
@@ -19,9 +20,11 @@ type Client interface {
 }
 
 type Task struct {
-	ID     string        `json:"id"`
-	Ready  bool          `json:"ready"`
-	Result *bench.Result `json:"result"`
+	ID          string        `json:"id"`
+	ContainerID string        `json:"containerId"`
+	Ready       bool          `json:"ready"`
+	Result      *bench.Result `json:"result"`
+	Logs        string        `json:"logs"`
 }
 
 type Job struct {
@@ -30,6 +33,8 @@ type Job struct {
 	Duration    time.Duration `json:"duration"`
 	Timeout     time.Duration `json:"timeout"`
 	URL         string        `json:"url"`
+
+	MetaData map[string]string `json:"meta"`
 
 	RequestTime time.Time `json:"requestTime"`
 	StartTime   time.Time `json:"startTime"`
@@ -77,6 +82,8 @@ func (r *Redis) SaveJob(j Job) error {
 func (r *Redis) GetJob(runID string) (Job, error) {
 	var j Job
 
+	log.Println(fmt.Sprintf("JOB_%s", runID))
+
 	jobData, err := r.r.Get(fmt.Sprintf("JOB_%s", runID)).Result()
 	if err != nil {
 		return j, errors.Wrap(err, "error getting job data")
@@ -106,6 +113,8 @@ func (r *Redis) GetJob(runID string) (Job, error) {
 
 func (r *Redis) GetTask(runID, taskID string) (Task, error) {
 	var t Task
+
+	log.Println("GET", fmt.Sprintf("JOB_%s_TASK_%s", runID, taskID))
 
 	taskData, err := r.r.Get(fmt.Sprintf("JOB_%s_TASK_%s", runID, taskID)).Result()
 	if err != nil {

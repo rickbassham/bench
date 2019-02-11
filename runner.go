@@ -136,7 +136,7 @@ type Timeout interface {
 }
 
 func (r *Runner) doRequest() (result SingleResult) {
-	randomKey, _ := rand.Int(rand.Reader, big.NewInt(50000000))
+	randomKey, _ := rand.Int(rand.Reader, big.NewInt(5000000))
 
 	url := fmt.Sprintf("%s%d", r.url, randomKey.Int64())
 

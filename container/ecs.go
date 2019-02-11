@@ -52,3 +52,7 @@ func (c *ECS) StartContainer(env map[string]string) (string, error) {
 
 	return *output.Tasks[0].TaskArn, nil
 }
+
+func (c *ECS) GetLogs(id string) (string, error) {
+	return "", nil
+}

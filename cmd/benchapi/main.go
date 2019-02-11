@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"math"
 	"net/http"
@@ -14,8 +16,10 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ecs"
 	"github.com/codahale/hdrhistogram"
+	"github.com/docker/docker/client"
 	"github.com/go-redis/redis"
 	"github.com/google/uuid"
+	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 
 	"github.com/rickbassham/bench"
@@ -25,6 +29,7 @@ import (
 
 type ContainerManager interface {
 	StartContainer(env map[string]string) (string, error)
+	GetLogs(id string) (string, error)
 }
 
 type StorageManager interface {
@@ -46,11 +51,7 @@ func main() {
 		}
 	}()
 
-	sess, err := session.NewSession()
-	if err != nil {
-		log.Println(err.Error())
-		return
-	}
+	log.Println("starting")
 
 	viper.SetEnvPrefix("bench")
 	viper.AutomaticEnv()
@@ -63,8 +64,28 @@ func main() {
 		Password: viper.GetString("redis-auth"),
 	})
 
-	cm = container.NewECS(ecs.New(sess), "", "")
 	sm = storage.NewRedis(r)
+
+	if viper.GetString("env") == "development" {
+		var c *client.Client
+		c, err = client.NewClientWithOpts(client.FromEnv)
+		if err != nil {
+			log.Println(err.Error())
+			return
+		}
+
+		c.NegotiateAPIVersion(context.Background())
+
+		cm = container.NewDocker(c, viper.GetString("image-name"))
+	} else {
+		sess, err := session.NewSession()
+		if err != nil {
+			log.Println(err.Error())
+			return
+		}
+
+		cm = container.NewECS(ecs.New(sess), viper.GetString("task-definition"), viper.GetString("cluster"))
+	}
 
 	http.HandleFunc("/health", health)
 	http.HandleFunc("/start", start)
@@ -72,6 +93,8 @@ func main() {
 	http.HandleFunc("/waitForStart", waitForStart)
 	http.HandleFunc("/reportResult", reportResult)
 	http.HandleFunc("/result", result)
+	http.HandleFunc("/logs", logs)
+	http.HandleFunc("/tasks", tasks)
 
 	err = http.ListenAndServe(":3000", nil)
 	if err != nil {
@@ -84,7 +107,16 @@ func health(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok"))
 }
 
+func writeErr(w http.ResponseWriter, err error) {
+	w.WriteHeader(500)
+	w.Write([]byte(fmt.Sprintf("%+v", err)))
+	log.Println(fmt.Sprintf("%+v", err))
+	return
+}
+
 func start(w http.ResponseWriter, r *http.Request) {
+	log.Println("info")
+
 	q := r.URL.Query()
 
 	concurrency64, err := strconv.ParseInt(q.Get("concurrency"), 10, 64)
@@ -119,32 +151,69 @@ func start(w http.ResponseWriter, r *http.Request) {
 
 	runID := uuid.New().String()
 
+	j := storage.Job{
+		Concurrency: concurrency,
+		Duration:    duration,
+		RequestTime: time.Now(),
+		RunID:       runID,
+		Timeout:     timeout,
+		URL:         u.String(),
+	}
+
+	if r.Body != nil {
+		err = json.NewDecoder(r.Body).Decode(&j.MetaData)
+		if err != nil {
+			writeErr(w, errors.Wrap(err, "error decoding body"))
+			return
+		}
+	}
+
 	for i := concurrency; i > 0; i -= maxPerContainer {
 		c := maxPerContainer
 		if i < c {
 			c = i
 		}
 
-		cm.StartContainer(map[string]string{
+		runnerID := uuid.New().String()
+
+		taskID, err := cm.StartContainer(map[string]string{
 			"BENCH_CONCURRENCY": strconv.FormatInt(int64(c), 10),
 			"BENCH_URL":         u.String(),
 			"BENCH_DURATION":    duration.String(),
 			"BENCH_TIMEOUT":     timeout.String(),
 			"BENCH_RUN_ID":      runID,
+			"BENCH_RUNNER_ID":   runnerID,
+		})
+
+		if err != nil {
+			writeErr(w, errors.Wrap(err, "error starting container"))
+			return
+		}
+
+		j.Tasks = append(j.Tasks, storage.Task{
+			ID:          runnerID,
+			ContainerID: taskID,
 		})
 	}
 
-	w.Write([]byte(runID))
+	err = sm.SaveJob(j)
+	if err != nil {
+		writeErr(w, errors.Wrap(err, "error saving job"))
+		return
+	}
+
+	json.NewEncoder(w).Encode(&j)
 }
 
 func readyToStart(w http.ResponseWriter, r *http.Request) {
 	runID := r.URL.Query().Get("runId")
 	runnerID := r.URL.Query().Get("runnerId")
 
+	log.Println("readyToStart", runID, runnerID)
+
 	task, err := sm.GetTask(runID, runnerID)
 	if err != nil {
-		w.WriteHeader(500)
-		w.Write([]byte(err.Error()))
+		writeErr(w, errors.Wrap(err, "error getting task"))
 		return
 	}
 
@@ -152,19 +221,19 @@ func readyToStart(w http.ResponseWriter, r *http.Request) {
 
 	err = sm.SaveTask(runID, task)
 	if err != nil {
-		w.WriteHeader(500)
-		w.Write([]byte(err.Error()))
+		writeErr(w, errors.Wrap(err, "error saving task"))
 		return
 	}
 }
 
 func waitForStart(w http.ResponseWriter, r *http.Request) {
+	log.Println("waitForStart")
+
 	runID := r.URL.Query().Get("runId")
 
 	job, err := sm.GetJob(runID)
 	if err != nil {
-		w.WriteHeader(500)
-		w.Write([]byte(err.Error()))
+		writeErr(w, errors.Wrap(err, "error getting job"))
 		return
 	}
 
@@ -182,6 +251,8 @@ func waitForStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func reportResult(w http.ResponseWriter, r *http.Request) {
+	log.Println("reportResult")
+
 	if r.Method != http.MethodPost {
 		w.WriteHeader(405)
 		return
@@ -192,16 +263,14 @@ func reportResult(w http.ResponseWriter, r *http.Request) {
 
 	task, err := sm.GetTask(runID, runnerID)
 	if err != nil {
-		w.WriteHeader(500)
-		w.Write([]byte(err.Error()))
+		writeErr(w, errors.Wrap(err, "error getting task"))
 		return
 	}
 
 	var result bench.Result
 	err = json.NewDecoder(r.Body).Decode(&result)
 	if err != nil {
-		w.WriteHeader(500)
-		w.Write([]byte(err.Error()))
+		writeErr(w, errors.Wrap(err, "error decoding body"))
 		return
 	}
 
@@ -209,19 +278,19 @@ func reportResult(w http.ResponseWriter, r *http.Request) {
 
 	err = sm.SaveTask(runID, task)
 	if err != nil {
-		w.WriteHeader(500)
-		w.Write([]byte(err.Error()))
+		writeErr(w, errors.Wrap(err, "error saving task"))
 		return
 	}
 }
 
 func result(w http.ResponseWriter, r *http.Request) {
+	log.Println("result")
+
 	runID := r.URL.Query().Get("runId")
 
 	job, err := sm.GetJob(runID)
 	if err != nil {
-		w.WriteHeader(500)
-		w.Write([]byte(err.Error()))
+		writeErr(w, errors.Wrap(err, "error getting job"))
 		return
 	}
 
@@ -255,6 +324,39 @@ func result(w http.ResponseWriter, r *http.Request) {
 	result.Histogram = h.Export()
 
 	json.NewEncoder(w).Encode(&result)
+}
+
+func logs(w http.ResponseWriter, r *http.Request) {
+	log.Println("logs")
+
+	runnerID := r.URL.Query().Get("runnerId")
+
+	logs, err := cm.GetLogs(runnerID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	w.Write([]byte(logs))
+}
+
+func tasks(w http.ResponseWriter, r *http.Request) {
+	log.Println("tasks")
+
+	runID := r.URL.Query().Get("runId")
+
+	j, err := sm.GetJob(runID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	for _, t := range j.Tasks {
+		logs, _ := cm.GetLogs(t.ContainerID)
+		t.Logs = logs
+	}
+
+	json.NewEncoder(w).Encode(&j.Tasks)
 }
 
 func hundredMicroSeconds(d time.Duration) int {

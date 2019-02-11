@@ -10,8 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/sts"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 
@@ -34,21 +32,17 @@ func main() {
 
 	viper.SetEnvPrefix("bench")
 	viper.AutomaticEnv()
-	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_", `"`, ""))
 
-	sess, err := session.NewSession()
-	if err != nil {
-		log.Println(err.Error())
-		return
+	log.Println("starting")
+
+	for _, e := range os.Environ() {
+		log.Println(e)
 	}
 
-	id, err := sts.New(sess).GetCallerIdentity(nil)
-	if err != nil {
-		log.Println(err.Error())
-		return
-	}
+	runnerID = viper.GetString("runner-id")
 
-	runnerID = *id.Arn
+	log.Println(runnerID)
 
 	apiURL = viper.GetString("api-url")
 	runID = viper.GetString("run-id")
@@ -60,15 +54,19 @@ func main() {
 
 	runner := bench.NewRunner(concurrency, duration, timeout, url)
 
+	log.Println("ready")
+
+	time.Sleep(10 * time.Second)
+
 	err = sendReadyToStart()
 	if err != nil {
-		log.Println(err.Error())
+		log.Println(fmt.Sprintf("%+v", err))
 		return
 	}
 
 	err = waitForStart()
 	if err != nil {
-		log.Println(err.Error())
+		log.Println(fmt.Sprintf("%+v", err))
 		return
 	}
 
@@ -76,7 +74,7 @@ func main() {
 
 	err = sendResult(result)
 	if err != nil {
-		log.Println(err.Error())
+		log.Println(fmt.Sprintf("%+v", err))
 	}
 }
 

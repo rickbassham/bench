@@ -1,0 +1,26 @@
+version: '3'
+services:
+  benchapi:
+    build:
+      context: .
+      dockerfile: api.Dockerfile
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    environment:
+      - "BENCH_ENV=development"
+      - "BENCH_MAX_PER_CONTAINER=50"
+      - "BENCH_REDIS_ADDRESS=redis:6379"
+      - "BENCH_REDIS_AUTH="
+      - "BENCH_IMAGE_NAME=bench_benchrunner:latest"
+    ports:
+      - "3000:3000"
+  redis:
+    image: redis:5.0.3
+    ports:
+      - "6379:6379"
+  benchrunner:
+    build:
+      context: .
+      dockerfile: runner.Dockerfile
+    environment:
+      - "BENCH_API_URL=http://172.17.0.1:3000"
