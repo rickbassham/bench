@@ -311,11 +311,12 @@ func result(w http.ResponseWriter, r *http.Request) {
 		StatusCodes: map[int]int{},
 	}
 
+	complete := true
+
 	for _, task := range job.Tasks {
 		if task.Result == nil {
-			w.WriteHeader(403)
-			w.Write([]byte("job not done"))
-			return
+			complete = false
+			continue
 		}
 
 		current := task.Result
@@ -357,13 +358,15 @@ func result(w http.ResponseWriter, r *http.Request) {
 	}
 
 	output := struct {
-		Job     bench.Job    `json:"job"`
-		Summary summary      `json:"summary"`
-		Result  bench.Result `json:"result"`
+		Complete bool         `json:"complete"`
+		Job      bench.Job    `json:"job"`
+		Summary  summary      `json:"summary"`
+		Result   bench.Result `json:"result"`
 	}{
-		Job:     job,
-		Summary: s,
-		Result:  result,
+		Complete: complete,
+		Job:      job,
+		Summary:  s,
+		Result:   result,
 	}
 
 	json.NewEncoder(w).Encode(&output)
