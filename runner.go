@@ -2,18 +2,25 @@ package bench
 
 import (
 	"context"
-	"crypto/rand"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"math"
-	"math/big"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/codahale/hdrhistogram"
 )
+
+type Replacer interface {
+	Replace(s string) string
+}
+
+type noopReplacer struct{}
+
+func (noopReplacer) Replace(s string) string {
+	return s
+}
 
 type Runner struct {
 	runID    string
@@ -23,6 +30,7 @@ type Runner struct {
 	duration    time.Duration
 	timeout     time.Duration
 	url         string
+	replacer    Replacer
 
 	wg sync.WaitGroup
 
@@ -47,9 +55,13 @@ func (r *Result) Hist() *hdrhistogram.Histogram {
 	return nil
 }
 
-func NewRunner(concurrency int, duration, timeout time.Duration, url string) *Runner {
+func NewRunner(concurrency int, duration, timeout time.Duration, url string, replacer Replacer) *Runner {
 	if timeout == 0 || timeout > 2*time.Second {
 		timeout = 2 * time.Second
+	}
+
+	if replacer == nil {
+		replacer = noopReplacer{}
 	}
 
 	return &Runner{
@@ -57,6 +69,7 @@ func NewRunner(concurrency int, duration, timeout time.Duration, url string) *Ru
 		duration:    duration,
 		timeout:     timeout,
 		url:         url,
+		replacer:    replacer,
 		runOutput:   make(chan singleResult, 1000),
 	}
 }
@@ -123,9 +136,7 @@ func (r *Runner) doRequest() {
 		r.runOutput <- result
 	}()
 
-	randomKey, _ := rand.Int(rand.Reader, big.NewInt(5000000))
-
-	url := fmt.Sprintf("%s%d", r.url, randomKey.Int64())
+	url := r.replacer.Replace(r.url)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {

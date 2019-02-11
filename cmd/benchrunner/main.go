@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/big"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +24,17 @@ var (
 	runID    string
 	runnerID string
 )
+
+type randomIntReplacer struct {
+	max int
+	key string
+}
+
+func (r randomIntReplacer) Replace(s string) string {
+	val, _ := rand.Int(rand.Reader, big.NewInt(int64(r.max)))
+
+	return strings.Replace(s, r.key, strconv.FormatInt(val.Int64(), 10), 0)
+}
 
 func main() {
 	var err error
@@ -52,7 +66,12 @@ func main() {
 	duration := viper.GetDuration("duration")
 	timeout := viper.GetDuration("timeout")
 
-	runner := bench.NewRunner(concurrency, duration, timeout, url)
+	replacer := randomIntReplacer{
+		key: "{random}",
+		max: 5000000,
+	}
+
+	runner := bench.NewRunner(concurrency, duration, timeout, url, replacer)
 
 	log.Println("ready")
 
