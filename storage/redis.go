@@ -25,6 +25,7 @@ type Task struct {
 	Ready       bool          `json:"ready"`
 	Result      *bench.Result `json:"result"`
 	Logs        string        `json:"logs"`
+	Concurrency int           `json:"concurrency"`
 }
 
 type Job struct {
@@ -40,7 +41,7 @@ type Job struct {
 	StartTime   time.Time `json:"startTime"`
 	EndTime     time.Time `json:"endTime"`
 
-	Tasks []Task `json:"-"`
+	Tasks []Task `json:"tasks"`
 }
 
 type Redis struct {
@@ -98,6 +99,8 @@ func (r *Redis) GetJob(runID string) (Job, error) {
 	if err != nil {
 		return j, errors.Wrap(err, "error getting tasks data")
 	}
+
+	j.Tasks = []Task{}
 
 	for _, taskID := range taskIDs {
 		t, err := r.GetTask(runID, taskID)

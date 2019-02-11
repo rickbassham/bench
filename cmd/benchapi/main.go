@@ -193,6 +193,7 @@ func start(w http.ResponseWriter, r *http.Request) {
 		j.Tasks = append(j.Tasks, storage.Task{
 			ID:          runnerID,
 			ContainerID: taskID,
+			Concurrency: c,
 		})
 	}
 
@@ -323,13 +324,45 @@ func result(w http.ResponseWriter, r *http.Request) {
 
 	result.Histogram = h.Export()
 
-	json.NewEncoder(w).Encode(&result)
+	type summary struct {
+		Max                   int64                  `json:"max"`
+		Min                   int64                  `json:"min"`
+		Mean                  float64                `json:"mean"`
+		StdDev                float64                `json:"stddev"`
+		TotalCount            int64                  `json:"totalCount"`
+		HighestTrackableValue int64                  `json:"highestTrackableValue"`
+		LowestTrackableValue  int64                  `json:"lowestTrackableValue"`
+		Brackets              []hdrhistogram.Bracket `json:"brackets"`
+	}
+
+	s := summary{
+		Max:                   h.Max(),
+		Min:                   h.Min(),
+		Mean:                  h.Mean(),
+		StdDev:                h.StdDev(),
+		TotalCount:            h.TotalCount(),
+		HighestTrackableValue: h.HighestTrackableValue(),
+		LowestTrackableValue:  h.LowestTrackableValue(),
+		Brackets:              h.CumulativeDistribution(),
+	}
+
+	output := struct {
+		Job     storage.Job  `json:"job"`
+		Summary summary      `json:"summary"`
+		Result  bench.Result `json:"result"`
+	}{
+		Job:     job,
+		Summary: s,
+		Result:  result,
+	}
+
+	json.NewEncoder(w).Encode(&output)
 }
 
 func logs(w http.ResponseWriter, r *http.Request) {
-	log.Println("logs")
-
 	runnerID := r.URL.Query().Get("runnerId")
+
+	log.Println("logs", runnerID)
 
 	logs, err := cm.GetLogs(runnerID)
 	if err != nil {
@@ -351,9 +384,9 @@ func tasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for _, t := range j.Tasks {
-		logs, _ := cm.GetLogs(t.ContainerID)
-		t.Logs = logs
+	for i := range j.Tasks {
+		logs, _ := cm.GetLogs(j.Tasks[i].ContainerID)
+		j.Tasks[i].Logs = logs
 	}
 
 	json.NewEncoder(w).Encode(&j.Tasks)
