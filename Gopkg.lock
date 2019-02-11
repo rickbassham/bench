@@ -40,6 +40,7 @@
     "private/protocol/query/queryutil",
     "private/protocol/rest",
     "private/protocol/xml/xmlutil",
+    "service/cloudwatchlogs",
     "service/ecs",
     "service/sts"
   ]
@@ -268,6 +269,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "31e626e947b41412af441b1bbbf251a0fc852bc054ec4480295efa32720cfcda"
+  inputs-digest = "8365799babd35435ebee0baa76b4e43cf52d93a48a5516e0133d3376d326698d"
   solver-name = "gps-cdcl"
   solver-version = 1

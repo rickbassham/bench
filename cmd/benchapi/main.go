@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go/service/cloudwatchlogs"
+
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ecs"
 	"github.com/codahale/hdrhistogram"
@@ -84,9 +86,11 @@ func main() {
 			return
 		}
 
-		cm = container.NewECS(
+		cm = container.NewAWS(
 			ecs.New(sess),
+			cloudwatchlogs.New(sess),
 			viper.GetString("task-definition"),
+			viper.GetString("log-group"),
 			viper.GetString("cluster"),
 			viper.GetStringSlice("subnets"),
 			viper.GetStringSlice("security-groups"),

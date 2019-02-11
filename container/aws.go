@@ -1,25 +1,34 @@
 package container
 
 import (
+	"strings"
+
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go/service/ecs"
 	"github.com/pkg/errors"
 )
 
-type ECSService interface {
+type ECS interface {
 	RunTask(input *ecs.RunTaskInput) (*ecs.RunTaskOutput, error)
 }
 
-type ECS struct {
-	ecs            ECSService
+type Logs interface {
+	GetLogEvents(input *cloudwatchlogs.GetLogEventsInput) (*cloudwatchlogs.GetLogEventsOutput, error)
+}
+
+type AWS struct {
+	ecs            ECS
+	logs           Logs
 	taskDefinition string
+	logGroup       string
 	cluster        string
 	subnets        []*string
 	securityGroups []*string
 	publicIP       *string
 }
 
-func NewECS(ecs ECSService, taskDefinition, cluster string, subnets, securityGroups []string, publicIP bool) *ECS {
+func NewAWS(ecs ECS, logs Logs, taskDefinition, logGroup, cluster string, subnets, securityGroups []string, publicIP bool) *AWS {
 	var assignPublicIP string
 	if publicIP {
 		assignPublicIP = "ENABLED"
@@ -27,9 +36,11 @@ func NewECS(ecs ECSService, taskDefinition, cluster string, subnets, securityGro
 		assignPublicIP = "DISABLED"
 	}
 
-	return &ECS{
+	return &AWS{
 		ecs:            ecs,
+		logs:           logs,
 		taskDefinition: taskDefinition,
+		logGroup:       logGroup,
 		cluster:        cluster,
 		subnets:        aws.StringSlice(subnets),
 		securityGroups: aws.StringSlice(securityGroups),
@@ -37,7 +48,7 @@ func NewECS(ecs ECSService, taskDefinition, cluster string, subnets, securityGro
 	}
 }
 
-func (c *ECS) StartContainer(env map[string]string) (string, error) {
+func (c *AWS) StartContainer(env map[string]string) (string, error) {
 	envOverride := []*ecs.KeyValuePair{}
 
 	for k, v := range env {
@@ -73,6 +84,32 @@ func (c *ECS) StartContainer(env map[string]string) (string, error) {
 	return *output.Tasks[0].TaskArn, nil
 }
 
-func (c *ECS) GetLogs(id string) (string, error) {
-	return "", nil
+func (c *AWS) GetLogs(id string) (string, error) {
+	var logs []string
+
+	var nextToken *string
+
+	for {
+		output, err := c.logs.GetLogEvents(&cloudwatchlogs.GetLogEventsInput{
+			NextToken:     nextToken,
+			StartFromHead: aws.Bool(true),
+			LogGroupName:  aws.String(c.logGroup),
+			LogStreamName: aws.String(id),
+		})
+		if err != nil {
+			return "", errors.Wrap(err, "error getting log events")
+		}
+
+		nextToken = output.NextForwardToken
+
+		for _, e := range output.Events {
+			logs = append(logs, *e.Message)
+		}
+
+		if nextToken == nil {
+			break
+		}
+	}
+
+	return strings.Join(logs, "\n"), nil
 }
